@@ -1,12 +1,37 @@
-# Neptune Paper Wallet (Standalone HTML Export)
+# Neptune Paper Wallet
 
-This tool generates a secure, offline paper wallet and a stylish HTML you can print or download. It currently shells out to `neptune-cli` for wallet creation and address derivation, but the output experience is now streamlined with copy, print, and download actions.
+Windows one-click EXE build for the paper wallet generator.
 
-- Creates a fresh wallet in an isolated data directory
-- Exports the 18‑word BIP‑39 seed phrase
-- Derives the first N Generation receiving addresses
-- Writes plaintext helpers: `mnemonic-<timestamp>.txt`, `addresses-<timestamp>.txt`
-- Optionally writes a polished HTML: `paper-wallet-<timestamp>.html` with buttons for Print, Copy, Download, and per-address QR codes
+## Build requirements
+- Node.js 18+ (recommended Node 20)
+- npm (comes with Node)
+
+## Build EXE
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build-exe.ps1
+```
+
+Output: `dist\neptune-paper-wallet.exe`
+
+## Run options
+Double-click the EXE or run via PowerShell/CMD:
+
+```powershell
+# Basic: default main network, 1 address, write HTML, auto-open folder
+.\dist\neptune-paper-wallet.exe --write --open
+
+# Custom: testnet, 5 addresses, output to a custom folder
+.\dist\neptune-paper-wallet.exe --network test --count 5 --out-dir C:\temp\paper-output --write --open
+
+# Override QR base URL for local resolver
+$env:QR_BASE_URL = 'http://127.0.0.1:8080'
+.\dist\neptune-paper-wallet.exe --write
+```
+
+The tool expects `neptune-cli` to be available. You can:
+- Set `NEPTUNE_CLI_PATH` env var to the full path of `neptune-cli.exe`, or
+- Place a built `neptune-cli.exe` in `neptune-core\target\{debug|release}` under the repo.
 
 ## Requirements
 
@@ -89,6 +114,10 @@ python -m http.server 8080
 - Host that folder at `QR_BASE_URL`. Each address gets a short code; scanning the QR opens the resolver showing the full address for easy copy.
 
 Note: The HTML tries to embed a tiny QR code library at generation time. If offline during generation, the page still works; QR will show a notice instead of rendering.
+
+## UX notes
+- Double-clicking the EXE with no arguments defaults to `--write` and opens the output folder.
+- Add `--no-open` to prevent auto-opening Explorer.
 
 ## Security notes
 

@@ -1,0 +1,25 @@
+{
+  "name": "neptune-paper-wallet",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Printable paper wallet generator for Neptune (Windows standalone build config)",
+  "bin": {
+    "generate-paper-wallet": "generate-paper-wallet.js"
+  },
+  "scripts": {
+    "build:win": "pkg . --target node18-win-x64 --output dist/neptune-paper-wallet.exe"
+  },
+  "pkg": {
+    "assets": [
+      "html.js",
+      "cli-utils.js",
+      "qr-utils.js"
+    ]
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  }
+}

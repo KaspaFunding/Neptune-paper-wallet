@@ -8,13 +8,28 @@ function findNeptuneCli() {
   const envPath = process.env.NEPTUNE_CLI_PATH;
   if (envPath && fs.existsSync(envPath)) return envPath;
 
-  const repoRoot = process.cwd();
-  const candidates = [
-    path.join(repoRoot, 'neptune-core', 'target', 'debug', 'neptune-cli.exe'),
-    path.join(repoRoot, 'neptune-core', 'target', 'release', 'neptune-cli.exe'),
-    'neptune-cli',
-    'neptune-cli.exe',
+  // Try to resolve relative to the EXE location when packaged with pkg
+  // In pkg, process.execPath points to the bundled executable
+  const exeDir = path.dirname(process.execPath);
+  const cwd = process.cwd();
+  const tryDirs = [
+    cwd,
+    path.resolve(exeDir),
+    path.resolve(exeDir, '..'),
+    path.resolve(exeDir, '..', '..'),
   ];
+
+  const candidates = [];
+  // Prefer a neptune-cli.exe sitting next to this EXE
+  candidates.push(path.join(exeDir, 'neptune-cli.exe'));
+  candidates.push(path.join(exeDir, 'bin', 'neptune-cli.exe'));
+  for (const base of tryDirs) {
+    candidates.push(path.join(base, 'neptune-core', 'target', 'release', 'neptune-cli.exe'));
+    candidates.push(path.join(base, 'neptune-core', 'target', 'debug', 'neptune-cli.exe'));
+  }
+  // Finally, try PATH
+  candidates.push('neptune-cli');
+  candidates.push('neptune-cli.exe');
   for (const p of candidates) {
     try {
       if (p.includes(path.sep)) {

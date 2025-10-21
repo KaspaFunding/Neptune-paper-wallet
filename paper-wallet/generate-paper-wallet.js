@@ -8,6 +8,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { spawn } = require('child_process');
 const { findNeptuneCli, runCli, ensureDir, parseMnemonicFromExport, parseAddressFromNth } = require('./cli-utils');
 const { fetchQrLibInline, makeShortCode, joinUrl, writeResolverAssets } = require('./qr-utils');
 const { renderHtml } = require('./html');
@@ -20,6 +21,8 @@ function parseCliArgs(argv) {
     const a = argv[i];
     if (!a.startsWith('--')) continue;
     if (a === '--write') { options.flags.add('write'); continue; }
+    if (a === '--open') { options.flags.add('open'); continue; }
+    if (a === '--no-open') { options.flags.add('no-open'); continue; }
     if (a === '--testnet') { options.kv.network = 'test'; continue; }
     if (a === '--network') { options.kv.network = (argv[i + 1] || '').toLowerCase(); i++; continue; }
     if (a === '--count') { options.kv.count = parseInt(argv[i + 1] || '1', 10); i++; continue; }
@@ -41,11 +44,14 @@ function sha256FileHex(filepath) {
   const cli = findNeptuneCli();
   const args = process.argv.slice(2);
   const parsed = parseCliArgs(args);
+  const noArgs = args.length === 0;
   const network = (parsed.kv.network || process.env.NETWORK || 'main').toLowerCase();
   const count = Math.max(1, Math.min(50, parsed.kv.count || parseInt(process.env.NUM_ADDRESSES || '1', 10) || 1));
-  const writeHtml = parsed.flags.has('write') || process.env.WRITE_HTML === '1' || args.includes('--write');
+  let writeHtml = parsed.flags.has('write') || process.env.WRITE_HTML === '1' || args.includes('--write');
+  if (noArgs && !writeHtml) { writeHtml = true; }
   const baseUrlOverride = parsed.kv.qrBaseUrl || process.env.QR_BASE_URL || '';
   const outDirOverride = parsed.kv.outDir || '';
+  const autoOpen = parsed.flags.has('open') || (noArgs && !parsed.flags.has('no-open') && process.env.NO_OPEN !== '1');
 
   const outRoot = outDirOverride
     ? (path.isAbsolute(outDirOverride) ? outDirOverride : path.join(process.cwd(), outDirOverride))
@@ -93,6 +99,20 @@ function sha256FileHex(filepath) {
   const mnemonicSha256 = sha256FileHex(mnemonicTxt);
   const addressesSha256 = sha256FileHex(addressesTxt);
 
+  // 5.1) Write a simple README to help users locate files when double-clicking the EXE
+  const readmePath = path.join(outRoot, `README-FIRST-${timestamp}.txt`);
+  const readme = [
+    'Neptune Paper Wallet - Output',
+    '',
+    `Created: ${timestamp}`,
+    `Network: ${network}`,
+    '',
+    'Files generated:',
+    `- ${path.basename(mnemonicTxt)}  (DO NOT SHARE)`,
+    `- ${path.basename(addressesTxt)}`,
+  ];
+  fs.writeFileSync(readmePath, readme.join('\n'), { encoding: 'utf8', flag: 'wx' });
+
   // 6) Optionally write printable HTML
   if (writeHtml) {
     const qrLibInline = await fetchQrLibInline();
@@ -121,6 +141,17 @@ function sha256FileHex(filepath) {
   } else {
     console.log(`\nWrote files:\n- ${mnemonicTxt}\n- ${addressesTxt}`);
     console.warn('[Info] Skipped writing HTML. Pass --write or set WRITE_HTML=1 to save a printable file.');
+  }
+
+  // 7) Optionally open the output folder in Explorer to help users locate files
+  if (autoOpen) {
+    try {
+      const folderToOpen = outRoot;
+      const child = spawn('explorer.exe', [folderToOpen], { detached: true, stdio: 'ignore' });
+      child.unref();
+    } catch (_) {
+      // best-effort only
+    }
   }
 })();
 
