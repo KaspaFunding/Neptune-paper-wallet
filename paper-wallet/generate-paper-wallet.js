@@ -6,132 +6,58 @@
 // - Derives first Generation receiving address (index 0)
 // - Optionally emits a minimal HTML file for printing
 
-const { spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { findNeptuneCli, runCli, ensureDir, parseMnemonicFromExport, parseAddressFromNth } = require('./cli-utils');
+const { fetchQrLibInline, makeShortCode, joinUrl, writeResolverAssets } = require('./qr-utils');
+const { renderHtml } = require('./html');
 
-function findNeptuneCli() {
-  const envPath = process.env.NEPTUNE_CLI_PATH;
-  if (envPath && fs.existsSync(envPath)) return envPath;
+// renderHtml is imported from ./html
 
-  const repoRoot = process.cwd();
-  const candidates = [
-    path.join(repoRoot, 'neptune-core', 'target', 'debug', 'neptune-cli.exe'),
-    path.join(repoRoot, 'neptune-core', 'target', 'release', 'neptune-cli.exe'),
-    'neptune-cli',
-    'neptune-cli.exe',
-  ];
-  for (const p of candidates) {
-    try {
-      if (p.includes(path.sep)) {
-        if (fs.existsSync(p)) return p;
-      } else {
-        const r = spawnSync(p, ['--help'], { stdio: 'ignore' });
-        if ((r.status === 0 || r.status === 2) && !r.error) return p;
-      }
-    } catch (_) {}
+function parseCliArgs(argv) {
+  const options = { flags: new Set(), kv: {} };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (!a.startsWith('--')) continue;
+    if (a === '--write') { options.flags.add('write'); continue; }
+    if (a === '--testnet') { options.kv.network = 'test'; continue; }
+    if (a === '--network') { options.kv.network = (argv[i + 1] || '').toLowerCase(); i++; continue; }
+    if (a === '--count') { options.kv.count = parseInt(argv[i + 1] || '1', 10); i++; continue; }
+    if (a === '--qr-base-url') { options.kv.qrBaseUrl = argv[i + 1] || ''; i++; continue; }
+    if (a === '--out-dir') { options.kv.outDir = argv[i + 1] || ''; i++; continue; }
   }
-  throw new Error('Could not locate neptune-cli. Set NEPTUNE_CLI_PATH to the binary, or build it first.');
+  return options;
 }
 
-function runCli(cliPath, args, opts = {}) {
-  const result = spawnSync(cliPath, args, { encoding: 'utf8', ...opts });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`Command failed (${result.status}): ${cliPath} ${args.join(' ')}\n${result.stdout}\n${result.stderr}`);
-  }
-  return result.stdout.trim();
+function sha256FileHex(filepath) {
+  const crypto = require('crypto');
+  const h = crypto.createHash('sha256');
+  const data = fs.readFileSync(filepath);
+  h.update(data);
+  return h.digest('hex');
 }
 
-function ensureDir(p) {
-  fs.mkdirSync(p, { recursive: true });
-}
-
-function parseMnemonicFromExport(output) {
-  // Lines like: "1. word" ... "18. word"
-  const words = [];
-  for (const line of output.split(/\r?\n/)) {
-    const m = line.match(/^\s*(\d{1,2})\.\s+([a-zA-Z]+)\s*$/);
-    if (m) {
-      const idx = parseInt(m[1], 10);
-      words[idx - 1] = m[2];
-    }
-  }
-  if (words.length !== 18 || words.some(w => !w)) {
-    throw new Error('Failed to parse 18-word seed phrase from neptune-cli output.');
-  }
-  return words;
-}
-
-function parseAddressFromNth(output) {
-  // get_nth_receiving_address prints wallet path then the address; take last non-empty line
-  const lines = output.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-  return lines[lines.length - 1];
-}
-
-function renderHtml({ network, words, addresses }) {
-  const escapedWords = words.map((w, i) => `${i + 1}. ${w}`).join('<br/>');
-  const addrList = addresses.map((a, i) => `<div><strong>Address #${i}:</strong> ${a}</div>`).join('');
-  return `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Neptune Paper Wallet</title>
-    <style>
-      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
-      .box { border: 2px solid #222; padding: 16px; border-radius: 8px; margin-bottom: 16px; }
-      .warning { color: #b00020; font-weight: 700; }
-      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-      h1 { margin-top: 0; }
-    </style>
-  </head>
-  <body>
-    <h1>Neptune Paper Wallet</h1>
-    <div class="box warning">Keep this paper safe and offline. Anyone with the words can spend your funds.</div>
-    <div class="box">
-      <h2>Important - Recovery Limitations</h2>
-      <ul>
-        <li>
-          This wallet can recover funds received with <strong>on-chain UTXO notifications</strong>
-          (ciphertexts embedded on-chain). The 18-word mnemonic plus the blockchain is sufficient.
-        </li>
-        <li>
-          Funds received via <strong>off-chain UTXO notifications</strong> require extra data (incoming randomness)
-          that is <em>not</em> derivable from the mnemonic. The sender must provide a transfer file, or the
-          running wallet must capture it when received. Otherwise, such funds cannot be recovered from this paper wallet.
-        </li>
-        <li>
-          Best practice: Instruct senders to use on-chain notifications when paying these addresses, or if you receive
-          off-chain transfers, immediately consolidate to yourself using an on-chain notification.
-        </li>
-      </ul>
-    </div>
-    <div class="box">
-      <div><strong>Network:</strong> ${network}</div>
-      <h2>Receive Address(es)</h2>
-      <div class="mono">${addrList}</div>
-    </div>
-    <div class="box">
-      <h2>Seed Phrase (18 words)</h2>
-      <div class="mono">${escapedWords}</div>
-    </div>
-  </body>
-</html>`;
-}
-
-(function main() {
+(async function main() {
   const cli = findNeptuneCli();
   const args = process.argv.slice(2);
-  const network = (process.env.NETWORK || (args.includes('--testnet') ? 'test' : 'main')).toLowerCase();
-  const count = Math.max(1, Math.min(50, parseInt(process.env.NUM_ADDRESSES || '1', 10) || 1));
-  const writeHtml = process.env.WRITE_HTML === '1' || args.includes('--write');
+  const parsed = parseCliArgs(args);
+  const network = (parsed.kv.network || process.env.NETWORK || 'main').toLowerCase();
+  const count = Math.max(1, Math.min(50, parsed.kv.count || parseInt(process.env.NUM_ADDRESSES || '1', 10) || 1));
+  const writeHtml = parsed.flags.has('write') || process.env.WRITE_HTML === '1' || args.includes('--write');
+  const baseUrlOverride = parsed.kv.qrBaseUrl || process.env.QR_BASE_URL || '';
+  const outDirOverride = parsed.kv.outDir || '';
 
-  const outRoot = path.join(process.cwd(), 'paper-wallet', 'output');
+  const outRoot = outDirOverride
+    ? (path.isAbsolute(outDirOverride) ? outDirOverride : path.join(process.cwd(), outDirOverride))
+    : path.join(process.cwd(), 'paper-wallet', 'output');
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const dataDir = path.join(outRoot, `wallet-${timestamp}`);
   ensureDir(dataDir);
   ensureDir(outRoot);
+
+  // Pre-compute output filenames so the HTML can link to them
+  const mnemonicTxt = path.join(outRoot, `mnemonic-${timestamp}.txt`);
+  const addressesTxt = path.join(outRoot, `addresses-${timestamp}.txt`);
 
   // 1) Generate fresh wallet in isolated data-dir (global flag must precede subcommand)
   runCli(cli, ['--data-dir', dataDir, 'generate-wallet', '--network', network]);
@@ -162,14 +88,33 @@ function renderHtml({ network, words, addresses }) {
   console.log('- If you expect off-chain transfers, ensure you obtain the transfer file(s) or consolidate to yourself via an on-chain notification.');
 
   // 5) Write plaintext helpers (mnemonic and addresses) to files to avoid terminal wrapping issues
-  const mnemonicTxt = path.join(outRoot, `mnemonic-${timestamp}.txt`);
-  const addressesTxt = path.join(outRoot, `addresses-${timestamp}.txt`);
   fs.writeFileSync(mnemonicTxt, words.join(' '), { encoding: 'utf8', flag: 'wx' });
   fs.writeFileSync(addressesTxt, addresses.join('\n'), { encoding: 'utf8', flag: 'wx' });
+  const mnemonicSha256 = sha256FileHex(mnemonicTxt);
+  const addressesSha256 = sha256FileHex(addressesTxt);
 
   // 6) Optionally write printable HTML
   if (writeHtml) {
-    const html = renderHtml({ network, words, addresses });
+    const qrLibInline = await fetchQrLibInline();
+    const baseUrl = baseUrlOverride;
+    let shortCodes = [];
+    let qrTargets = addresses.slice();
+    if (baseUrl) {
+      shortCodes = addresses.map((addr, idx) => makeShortCode(addr, idx));
+      qrTargets = shortCodes.map(code => joinUrl(baseUrl, code));
+      writeResolverAssets(outRoot, shortCodes, addresses);
+    }
+    const html = renderHtml({
+      network,
+      words,
+      addresses,
+      addressesFile: path.basename(addressesTxt),
+      mnemonicFile: path.basename(mnemonicTxt),
+      timestamp,
+      qrLibInline,
+      qrTargets,
+      checksums: { mnemonicSha256, addressesSha256 },
+    });
     const htmlPath = path.join(outRoot, `paper-wallet-${timestamp}.html`);
     fs.writeFileSync(htmlPath, html, { encoding: 'utf8', flag: 'wx' });
     console.log(`\nWrote files:\n- ${htmlPath}\n- ${mnemonicTxt}\n- ${addressesTxt}`);
